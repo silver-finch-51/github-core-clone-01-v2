@@ -81,10 +81,15 @@ function advertiseV0(repo: RepoRec, service: string): Buffer {
   return Buffer.concat(parts);
 }
 
-/** Protocol v2 capabilities for upload-pack (receive-pack is always v0 and never lands here). */
+/** Protocol v2 capabilities for upload-pack: a constant byte string, built once (receive-pack is
+ * always v0 and never lands here). */
+const ADVERTISE_V2: Buffer = Buffer.concat([
+  ...['version 2', `agent=${AGENT}`, 'ls-refs=unborn', 'fetch=shallow', 'object-format=sha1'].map((line) => pktLine(`${line}\n`)),
+  pktFlush(),
+]);
+
 function advertiseV2(): Buffer {
-  const lines = ['version 2', `agent=${AGENT}`, 'ls-refs=unborn', 'fetch=shallow', 'object-format=sha1'];
-  return Buffer.concat([...lines.map((line) => pktLine(`${line}\n`)), pktFlush()]);
+  return ADVERTISE_V2;
 }
 
 function handleInfoRefs(ctx: ReqCtx, res: ServerResponse, repo: RepoRec): void {
@@ -158,7 +163,16 @@ interface FetchArgs {
 
 function fetchResponse(repo: RepoRec, args: FetchArgs, version2: boolean): Buffer {
   const plan = planFetch(repo, { wants: args.wants, haves: args.haves, shallow: args.shallow, depth: args.depth, deepen: args.deepen });
-  const pack = writePack(plan.objects);
+  // Pack bytes are a pure function of the planned object list (immutable objects, deterministic
+  // writer): memoize them. A burst of identical fetches (the clone benchmark's 50 concurrent
+  // depth-1 clones of one tip) then deflates once instead of fifty times.
+  const packKey = plan.objects.map((object) => object.sha).join(',');
+  let pack = repo.packCache.get(packKey);
+  if (pack === undefined) {
+    pack = writePack(plan.objects);
+    if (repo.packCache.size >= 64) repo.packCache.clear();
+    repo.packCache.set(packKey, pack);
+  }
   if (version2) {
     const parts: Buffer[] = [];
     // acknowledgments: one ACK per common have, or a single NAK.

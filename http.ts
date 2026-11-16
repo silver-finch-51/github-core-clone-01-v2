@@ -62,9 +62,10 @@ export function makeCtx(forge: Forge, host: string, query: URLSearchParams, body
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown, headers: Readonly<Record<string, string>> = {}): void {
-  const text = `${JSON.stringify(body)}\n`;
-  res.writeHead(status, { 'content-type': JSON_TYPE, 'content-length': Buffer.byteLength(text), ...headers });
-  res.end(text);
+  // Encode once into a Buffer: byteLength-then-end(text) would scan and re-encode the string.
+  const buf = Buffer.from(`${JSON.stringify(body)}\n`, 'utf8');
+  res.writeHead(status, { 'content-type': JSON_TYPE, 'content-length': buf.length, ...headers });
+  res.end(buf);
 }
 
 export function sendRaw(res: ServerResponse, status: number, contentType: string, body: Buffer, headers: Readonly<Record<string, string>> = {}): void {

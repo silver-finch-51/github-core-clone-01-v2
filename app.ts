@@ -29,10 +29,31 @@ function isAuthorized(req: IncomingMessage): boolean {
   return (req.headers.authorization ?? '') === `Bearer ${expected}`;
 }
 
+const EMPTY_BODY = Buffer.alloc(0);
+
 /** The decoded path segments of a request URL ('/' -> []), or null when the URL does not parse. */
 function segmentsOf(req: IncomingMessage): { segments: string[]; query: URLSearchParams } | null {
+  const raw = req.url ?? '/';
+  // Fast path for the origin-form URLs every client here sends: split the path by hand instead of
+  // running the WHATWG URL parser per request. Anything unusual (absolute-form, dot segments, a
+  // fragment marker) falls back to the parser, preserving its normalisation exactly.
+  if (raw.startsWith('/') && !raw.includes('#') && !raw.includes('/.') && !raw.includes('\\')) {
+    const q = raw.indexOf('?');
+    const path = q >= 0 ? raw.slice(0, q) : raw;
+    const segments = path
+      .split('/')
+      .filter((part) => part !== '')
+      .map((part) => {
+        try {
+          return decodeURIComponent(part);
+        } catch {
+          return part;
+        }
+      });
+    return { segments, query: new URLSearchParams(q >= 0 ? raw.slice(q + 1) : '') };
+  }
   try {
-    const url = new URL(req.url ?? '/', 'http://entry');
+    const url = new URL(raw, 'http://entry');
     const segments = url.pathname
       .split('/')
       .filter((part) => part !== '')
@@ -60,7 +81,12 @@ export function createApp(): Server {
         if (parsed === null) throw new HttpError(400, 'Bad request URL');
         const { segments, query } = parsed;
         const method = req.method ?? 'GET';
-        const body = await readBody(req);
+        // A request that declares no body (no content-length, or 0, and no transfer-encoding)
+        // has none: skip the awaited read so bodyless GETs don't pay an event-loop turn each.
+        const lengthHeader = req.headers['content-length'];
+        const declaresBody = req.headers['transfer-encoding'] !== undefined
+          || (lengthHeader !== undefined && lengthHeader !== '0');
+        const body = declaresBody ? await readBody(req) : EMPTY_BODY;
         const host = req.headers.host ?? 'localhost';
         const ctx = makeCtx(forge, host, query, body, req.headers['git-protocol'] ?? '');
 

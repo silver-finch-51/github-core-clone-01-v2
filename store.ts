@@ -89,6 +89,9 @@ export interface RepoRec {
   nextObjectSeq: number;
   /** Memoized commit generations (see git.ts generationOf); commits are immutable, so it never invalidates. */
   genCache: Map<string, number>;
+  /** Memoized fetch pack bytes, keyed by the plan's object sha list (see githttp.ts fetchResponse);
+   * objects are immutable and writePack is deterministic, so a hit is byte-identical. Bounded. */
+  packCache: Map<string, Buffer>;
   /** Full ref names ('refs/heads/main') to the sha they point at. */
   refs: Map<string, string>;
   labels: Map<string, LabelRec>;
@@ -163,6 +166,7 @@ export class Forge {
       objectSeq: new Map(),
       nextObjectSeq: 1,
       genCache: new Map(),
+      packCache: new Map(),
       refs: new Map(),
       labels: new Map(),
       issues: new Map(),

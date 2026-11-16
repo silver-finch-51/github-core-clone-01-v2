@@ -26,6 +26,11 @@ export function objectSha(type: string, data: Buffer): string {
 /** Store an object (idempotent: an object already present keeps its original insertion order). */
 export function storeObject(repo: RepoRec, type: GitObject['type'], data: Buffer): string {
   const sha = objectSha(type, data);
+  return storeObjectAt(repo, type, data, sha);
+}
+
+/** Store an object whose sha the caller already computed (parsePack did): same idempotence, no re-hash. */
+export function storeObjectAt(repo: RepoRec, type: GitObject['type'], data: Buffer, sha: string): string {
   if (!repo.objects.has(sha)) {
     repo.objects.set(sha, { type, data });
     repo.objectSeq.set(sha, repo.nextObjectSeq);
@@ -390,6 +395,20 @@ export function writePack(objects: readonly { type: string; data: Buffer }[]): B
 
 /** Inflate one deflate stream starting at `offset`; answers the data and the stream's exact byte length. */
 function inflateEntry(buf: Buffer, offset: number): { data: Buffer; length: number } {
+  // Fast path: one inflateSync over the rest of the buffer with {info: true} — the zlib engine
+  // reports exactly how many input bytes the stream consumed (bytesWritten), which is the length
+  // the probing path below used to spend ~5-15 inflate calls finding per object.
+  try {
+    const out = inflateSync(buf.subarray(offset), { info: true }) as unknown as {
+      buffer: Buffer;
+      engine: { bytesWritten: number };
+    };
+    if (out !== null && typeof out === 'object' && typeof out.engine?.bytesWritten === 'number' && out.engine.bytesWritten > 0) {
+      return { data: out.buffer, length: out.engine.bytesWritten };
+    }
+  } catch {
+    // A corrupt stream falls through: the probing path raises the same failure it always did.
+  }
   // inflateSync ignores trailing bytes, and a proper prefix of a deflate stream never decodes, so the
   // smallest length that decodes is the stream's true length: probe exponentially, then binary-search.
   const max = buf.length - offset;

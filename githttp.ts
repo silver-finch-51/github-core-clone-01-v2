@@ -24,7 +24,7 @@ import {
   pktLine,
   planFetch,
   readPktLines,
-  storeObject,
+  storeObjectAt,
   writePack,
 } from './git.ts';
 
@@ -288,7 +288,7 @@ function handleReceivePack(ctx: ReqCtx, res: ServerResponse, repo: RepoRec): voi
   if (packAt < body.length) {
     try {
       const parsed = parsePack(repo, body, packAt);
-      for (const object of parsed.objects) storeObject(repo, object.type, object.data);
+      for (const object of parsed.objects) storeObjectAt(repo, object.type, object.data, object.sha);
     } catch (err) {
       unpackLine = `unpack ${err instanceof Error ? err.message : 'error'}`;
     }
